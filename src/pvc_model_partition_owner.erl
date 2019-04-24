@@ -72,15 +72,19 @@ get_cache_name(Partition, Base) ->
         Normal -> Normal
     end.
 
+%% TODO(borja)
 async_read(_ReplyTo, _Partition, _Key, _VCaggr, _HasRead) ->
     erlang:error(unimplemented).
 
+%% TODO(borja)
 sync_read(_Partition, _Key, _VCaggr, _HasRead) ->
     erlang:error(unimplemented).
 
+%% TODO(borja)
 prepare(_Partition, _TxId, _WriteSet, _PartitionVersion) ->
     erlang:error(unimplemented).
 
+%% TODO(borja)
 decide(_Partition, _TxId, _Outcome) ->
     erlang:error(unimplemented).
 
