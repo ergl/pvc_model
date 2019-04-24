@@ -1,0 +1,4 @@
+[{<<"pvc_types">>,
+  {git,"https://github.com/ergl/pvc_types.git",
+       {ref,"9e21098f8f67ec72510077abcc6570613d6c6c37"}},
+  0}].
