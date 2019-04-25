@@ -19,16 +19,12 @@
 %% -------------------------------------------------------------------
 
 -module(pvc_commit_log).
-
--define(VERSION_THRESHOLD, 500).
--define(MAX_VERSIONS, 100).
-
--type pvc_vc() :: pvc_vclock:vc(non_neg_integer()).
+-include("pvc_model.hrl").
 
 -record(clog, {
-    at :: non_neg_integer(),
+    at :: partition_id(),
     smallest :: non_neg_integer() | bottom,
-    data :: gb_trees:tree(non_neg_integer(), pvc_vc())
+    data :: gb_trees:tree(non_neg_integer(), vc())
 }).
 
 -type clog() :: #clog{}.
@@ -36,10 +32,10 @@
 -export_type([clog/0]).
 
 -export([new_at/1,
-    insert/2,
-    get_smaller_from_dots/3]).
+         insert/2,
+         get_smaller_from_dots/3]).
 
--spec new_at(non_neg_integer()) -> clog().
+-spec new_at(partition_id()) -> clog().
 new_at(AtId) ->
     #clog{at=AtId, smallest=bottom, data=gb_trees:empty()}.
 
@@ -51,7 +47,7 @@ new_at(AtId) ->
 %%
 %% If this assumption doesn't hold, this will fail
 %%
--spec insert(pvc_vc(), clog()) -> clog().
+-spec insert(vc(), clog()) -> clog().
 insert(VC, C=#clog{at=Id, smallest=bottom, data=Tree}) ->
     Key = pvc_vclock:get_time(Id, VC),
     %% If smallest is bottom, set the first time we get to it
@@ -86,7 +82,7 @@ gc_tree(Start, Edge, Acc) when Edge > Start ->
 %%
 %%    max { e \in Clog | forall idx. e[idx] <= VC[idx] }
 %%
--spec get_smaller_from_dots([non_neg_integer()], pvc_vc(), clog()) -> pvc_vc().
+-spec get_smaller_from_dots([non_neg_integer()], vc(), clog()) -> vc().
 get_smaller_from_dots([], _, #clog{data=Tree}) ->
     case gb_trees:is_empty(Tree) of
         true ->
@@ -134,7 +130,7 @@ get_smaller_from_dots(Dots, VC, Tree, Acc) ->
 %%
 %%  vc_ge_for_dots([a, ... , z], A, B) == A[a] =< B[b] ^ .. ^ A[z] =< B[z]
 %%
--spec vc_ge_for_dots(list(non_neg_integer()), pvc_vc(), pvc_vc()) -> boolean().
+-spec vc_ge_for_dots(list(non_neg_integer()), vc(), vc()) -> boolean().
 vc_ge_for_dots(Dots, A, B) ->
     Compared = lists:map(fun(Dot) ->
         {pvc_vclock:get_time(Dot, A), pvc_vclock:get_time(Dot, B)}
@@ -145,7 +141,7 @@ vc_ge_for_dots(Dots, A, B) ->
 
 %% Peeked at the internals of gb_trees for this
 
--spec get_root(gb_trees:tree()) -> {integer(), pvc_vc()} | none.
+-spec get_root(gb_trees:tree()) -> {integer(), vc()} | none.
 get_root({_, nil}) ->
     none;
 

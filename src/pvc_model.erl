@@ -1,4 +1,5 @@
 -module(pvc_model).
+-include("pvc_model.hrl").
 
 %% App API
 -export([start/0,
@@ -22,34 +23,41 @@ start() ->
 stop() ->
     application:stop(pvc_model).
 
--spec start_partitions([non_neg_integer()]) -> [pvc_model_partition_owner:pref()].
+-spec start_partitions([partition_id()]) -> [pref()].
 start_partitions(PartitionList) ->
     lists:map(fun(P) ->
         {ok, _, PRef} = pvc_model_partition_owner:start_partition(P),
-        PRef
+        {PRef, P}
     end, PartitionList).
 
--spec stop_partitions([pvc_model_partition_owner:pref()]) -> ok.
-stop_partitions(PRefList) ->
-    [pvc_model_partition_owner:stop_partition(Ref) || Ref <- PRefList],
+-spec stop_partitions([pref()]) -> ok.
+stop_partitions(PRefs) ->
+    [pvc_model_partition_owner:stop_partition(Ref) || {Ref, _} <- PRefs],
     ok.
 
+-spec read(partition_id(), key(), vc(), read_partitions()) -> {ok, val(), vc(), vc()}
+                                                            | abort().
 read(Partition, Key, VCaggr, HasRead) ->
     pvc_model_partition_owner:read(Partition, Key, VCaggr, HasRead).
+
+-spec prepare(partition_id(),
+              tx_id(),
+              ws(),
+              non_neg_integer()) -> {ok, partition_id(), non_neg_integer()}
+                                 | abort().
 
 prepare(Partition, TxId, WriteSet, PartitionVersion) ->
     pvc_model_partition_owner:prepare(Partition, TxId, WriteSet, PartitionVersion).
 
--spec decide(_, _, _) -> ok.
+-spec decide(partition_id(), tx_id(), outcome()) -> ok.
 decide(Partition, TxId, Outcome) ->
     pvc_model_partition_owner:decide(Partition, TxId, Outcome).
 
-
--spec partition_for_key([pvc_model_partition_owner:pref()], term()) -> pvc_model_partition_owner:pref().
+-spec partition_for_key([pref()], key()) -> partition_id().
 partition_for_key(PartitionList, Key) ->
     Conv = convert_key(Key),
     Pos = Conv rem length(PartitionList) + 1,
-    lists:nth(Pos, PartitionList).
+    element(2, lists:nth(Pos, PartitionList)).
 
 -spec convert_key(term()) -> non_neg_integer().
 convert_key(Key) when is_binary(Key) ->

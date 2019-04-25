@@ -1,4 +1,5 @@
 -module(pvc_model_partition_owner).
+-include("pvc_model.hrl").
 
 -behaviour(gen_server).
 
@@ -20,15 +21,8 @@
          terminate/2,
          code_change/3]).
 
--type pref() :: atom().
--type reason() :: partition_not_started
-                | abort_read
-                | abort_stale
-                | abort_conflict
-                | try_again.
-
 -record(state, {
-    partition :: non_neg_integer(),
+    partition :: partition_id(),
     vlog :: ets:tab(),
     vlog_last_cache :: ets:tab(),
     %% feels wasteful to waste an entire ETS
@@ -51,7 +45,7 @@ start_link(Name, Partition) ->
 %%% API
 %%%===================================================================
 
--spec start_partition(non_neg_integer()) -> {ok, pid(), pref()} | {error, term()}.
+-spec start_partition(partition_id()) -> {ok, pid(), partition_server()} | {error, term()}.
 start_partition(Partition) ->
     Name = generate_partition_name(Partition),
     Ret = supervisor:start_child(pvc_model_partition_sup, [Name, Partition]),
@@ -62,16 +56,11 @@ start_partition(Partition) ->
             Error
     end.
 
--spec stop_partition(pref()) -> ok.
+-spec stop_partition(partition_server()) -> ok.
 stop_partition(PRef) ->
     gen_server:call(PRef, stop, infinity).
 
--spec read(
-    non_neg_integer(),
-    term(),
-    pvc_vclock:vc(),
-    ordsets:ordset(non_neg_integer())
-) -> {ok, term(), pvc_vclock:vc(), pvc_vclock:vc()} | {error, reason()}.
+-spec read(partition_id(), key(), vc(), read_partitions()) -> {ok, val(), vc(), vc()} | abort().
 read(Partition, Key, VCaggr, HasRead) ->
     case ordsets:is_element(Partition, HasRead) of
         true ->
@@ -81,13 +70,32 @@ read(Partition, Key, VCaggr, HasRead) ->
             clog_read(Partition, Key, VCaggr, HasRead)
     end.
 
-%% TODO(borja)
-prepare(_Partition, _TxId, _WriteSet, _PartitionVersion) ->
-    erlang:error(unimplemented).
+-spec prepare(Partition :: partition_id(),
+              TxId :: tx_id(),
+              WriteSet :: ws(),
+              PartitionVersion :: non_neg_integer()) -> {ok, non_neg_integer(), non_neg_integer()}
+                                                      | abort().
 
-%% TODO(borja)
-decide(_Partition, _TxId, _Outcome) ->
-    erlang:error(unimplemented).
+prepare(Partition, TxId, WriteSet, PartitionVersion) ->
+    case is_ws_stale(Partition, WriteSet, PartitionVersion) of
+        true ->
+            %% Quick fail, can read from ETS
+            {error, abort_stale};
+        false ->
+            %% Need to check with commit queue inside the partition
+            try
+                gen_server:call(generate_partition_name(Partition), {prepare, TxId, WriteSet})
+            catch _:_Reason  ->
+                {error, partition_not_started}
+            end
+    end.
+
+-spec decide(Partition :: partition_id(),
+             TxId :: tx_id(),
+             Outcome :: outcome()) -> ok.
+
+decide(Partition, TxId, Outcome) ->
+    gen_server:cast(generate_partition_name(Partition), {decide, TxId, Outcome}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -115,12 +123,35 @@ handle_call({clog, VCaggr, Dots}, _Sender, State=#state{clog=CLog}) ->
     MaxVC = pvc_commit_log:get_smaller_from_dots(Dots, VCaggr, CLog),
     {reply, {ok, MaxVC}, State};
 
+handle_call({prepare, TxId, WriteSet}, _Sender, State=#state{partition=Partition,
+                                                             commit_queue=CommitQueue,
+                                                             last_prep=LastPrep}) ->
+
+    Disputed = pvc_commit_queue:contains_disputed(WriteSet, CommitQueue),
+    case Disputed of
+        true ->
+            {reply, {error, abort_conflict}, State};
+        false ->
+            SeqNumber = LastPrep + 1,
+            NewCommitQueue = pvc_commit_queue:enqueue(TxId, WriteSet, CommitQueue),
+            NewState = State#state{last_prep=SeqNumber, commit_queue=NewCommitQueue},
+            {reply, {ok, Partition, SeqNumber}, NewState}
+    end;
+
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
 
 handle_call(E, _From, S) ->
     io:format("unexpected call: ~p~n", [E]),
     {reply, ok, S}.
+
+handle_cast({decide, TxId, Outcome}, State) ->
+    NewQueue = decide_internal(TxId, Outcome, State),
+    {noreply, State#state{commit_queue=NewQueue}};
+
+handle_cast(process_queue, State) ->
+    NewState = process_queue(State),
+    {noreply, NewState};
 
 handle_cast(E, S) ->
     io:format("unexpected cast: ~p~n", [E]),
@@ -160,7 +191,7 @@ get_cache_name(Partition, Base) ->
     end.
 
 %% @doc Generate a name for this partition owner
--spec generate_partition_name(non_neg_integer()) -> atom().
+-spec generate_partition_name(partition_id()) -> partition_server().
 generate_partition_name(Partition) ->
     BinPart = integer_to_binary(Partition),
     Name = <<<<"owner-">>/binary, BinPart/binary>>,
@@ -192,10 +223,9 @@ get_persistent_table(Key) ->
             {ok, Val}
     end.
 
--spec vlog_read(Partition :: non_neg_integer(),
-                Key :: term(),
-                MaxVC :: pvc_vclock:vc()) -> {ok, term(), pvc_vclock:vc(), pvc_vclock:vc()}
-                                           | {error, reason()}.
+-spec vlog_read(Partition :: partition_id(),
+                Key :: key(),
+                MaxVC :: vc()) -> {ok, val(), vc(), vc()} | abort().
 vlog_read(Partition, Key, MaxVC) ->
     case get_persistent_table({vlog, Partition}) of
         {error, Reason} ->
@@ -210,10 +240,10 @@ vlog_read(Partition, Key, MaxVC) ->
               end
     end.
 
--spec clog_read(Partition :: non_neg_integer(),
-                Key :: term(),
-                VCaggr :: pvc_vclock:vc(), ordsets:ordset()) -> {ok, term(), pvc_vclock:vc(), pvc_vclock:vc()}
-                                                             | {error, reason()}.
+-spec clog_read(Partition :: partition_id(),
+                Key :: key(),
+                VCaggr :: vc(), read_partitions()) -> {ok, val(), vc(), vc()}
+                                                    | abort().
 
 clog_read(Partition, Key, VCaggr, HasRead) ->
     case mrvc_for(Partition) of
@@ -228,6 +258,7 @@ clog_read(Partition, Key, VCaggr, HasRead) ->
             end
     end.
 
+-spec mrvc_for(partition_id()) -> {ok, vc()} | {error, reason()}.
 mrvc_for(Partition) ->
     case get_persistent_table({mrvc_cache, Partition}) of
         {error, Reason} ->
@@ -236,6 +267,7 @@ mrvc_for(Partition) ->
             {ok, ets:lookup_element(MRVC, mrvc, 2)}
     end.
 
+-spec check_time(partition_id(), vc(), vc()) -> ready | not_ready.
 check_time(Partition, MostRecentVC, VCaggr) ->
     MostRecentTime = pvc_vclock:get_time(Partition, MostRecentVC),
     AggregateTime = pvc_vclock:get_time(Partition, VCaggr),
@@ -246,6 +278,7 @@ check_time(Partition, MostRecentVC, VCaggr) ->
             ready
     end.
 
+-spec clog_read_internal(partition_id(), key(), vc(), read_partitions()) -> {ok, val(), vc(), vc()} | abort().
 clog_read_internal(Partition, Key, VCaggr, HasRead) ->
     case find_maxvc(Partition, VCaggr, HasRead) of
         {error, Reason} ->
@@ -254,6 +287,7 @@ clog_read_internal(Partition, Key, VCaggr, HasRead) ->
             vlog_read(Partition, Key, MaxVC)
     end.
 
+-spec find_maxvc(partition_id(), vc(), read_partitions()) -> {ok, vc()} | abort().
 find_maxvc(Partition, VCaggr, HasRead) ->
     Res = case ordsets:size(HasRead) of
         0 ->
@@ -268,9 +302,9 @@ find_maxvc(Partition, VCaggr, HasRead) ->
             check_valid_max_vc(Partition, VCaggr, MaxVC)
     end.
 
--spec scan_clog(Partition :: non_neg_integer(),
-                VCaggr :: pvc_vclock:vc(),
-                Dots :: [non_neg_integer()]) -> {ok, pvc_vclock:vc()} | {error, reason()}.
+-spec scan_clog(Partition :: partition_id(),
+                VCaggr :: vc(),
+                Dots :: [partition_id()]) -> {ok, vc()} | {error, reason()}.
 scan_clog(Partition, VCaggr, Dots) ->
     try
         gen_server:call(generate_partition_name(Partition), {clog, VCaggr, Dots})
@@ -278,6 +312,7 @@ scan_clog(Partition, VCaggr, Dots) ->
         {error, partition_not_started}
     end.
 
+-spec check_valid_max_vc(partition_id(), vc(), vc()) -> {ok, vc()} | abort().
 check_valid_max_vc(Partition, VCaggr, MaxVC) ->
     MaxSelectedTime = pvc_vclock:get_time(Partition, MaxVC),
     CurrentThresholdTime = pvc_vclock:get_time(Partition, VCaggr),
@@ -288,3 +323,95 @@ check_valid_max_vc(Partition, VCaggr, MaxVC) ->
         false ->
             {error, abort_read}
     end.
+
+-spec is_ws_stale(partition_id(), ws(), non_neg_integer()) -> boolean().
+is_ws_stale(Partition, WriteSet, PartitionVersion) ->
+    case get_persistent_table({vlog_last_cache, Partition}) of
+        {error, _} ->
+            false;
+        {ok, Cache} ->
+            check_stale_ws(pvc_writeset:to_list(WriteSet), PartitionVersion, Cache)
+    end.
+
+check_stale_ws([], _, _) -> false;
+check_stale_ws([{Key, _} | Rest], Version, Cache) ->
+    StaleKey = case ets:lookup(Cache, Key) of
+        [] ->
+            false;
+        [{Key, CommitTime}] ->
+            CommitTime > Version
+    end,
+    case StaleKey of
+        true ->
+            true;
+        false ->
+            check_stale_ws(Rest, Version, Cache)
+    end.
+
+-spec decide_internal(tx_id(), outcome(), #state{}) -> pvc_commit_queue:cqueue().
+decide_internal(TxId, Outcome, #state{partition=Partition, commit_queue=CommitQueue}) ->
+    case Outcome of
+        abort ->
+            pvc_commit_queue:remove(TxId, CommitQueue);
+        {ok, CommitVC} ->
+            ReadyQueue = pvc_commit_queue:ready(TxId, [], CommitVC, CommitQueue),
+            ok = schedule_queue_process(Partition),
+            ReadyQueue
+    end.
+
+-spec schedule_queue_process(partition_id()) -> ok.
+schedule_queue_process(Partition) ->
+    gen_server:cast(generate_partition_name(Partition), process_queue).
+
+
+-spec process_queue(#state{}) -> #state{}.
+process_queue(State=#state{partition=Partition, vlog=VLog,
+                           commit_queue=CommitQueue, vlog_last_cache=VLogCache}) ->
+
+    {ReadyTx, NewQueue} = pvc_commit_queue:dequeue_ready(CommitQueue),
+    case ReadyTx of
+        [] ->
+            State#state{commit_queue=NewQueue};
+        Entries ->
+            CLog = State#state.clog,
+            OldMRVC = ets:lookup_element(State#state.mrvc, mrvc, 2),
+            {NewCLog, NewMRVC} = lists:foldl(fun(Entry, {AccCLog, AccMRVC}) ->
+                {_TxId, WriteSet, CommitVC, _} = Entry,
+                ListWS = pvc_writeset:to_list(WriteSet),
+
+                %% Update VLog
+                ok = update_vlog(Partition, CommitVC, ListWS, VLog),
+                %% Cache VLog.last(Key) \forall Key \in WS
+                ok = cache_vlog_last(Partition, CommitVC, ListWS, VLogCache),
+
+                %% Update MRVC and CLog
+                %% We gate updating them until the end,
+                %% so transactions see the updates until the end
+                FoldCLog = pvc_commit_log:insert(CommitVC, AccCLog),
+                FoldMRVC = pvc_vclock:max(CommitVC, AccMRVC),
+                {FoldCLog, FoldMRVC}
+            end, {CLog, OldMRVC}, Entries),
+
+            %% Leave the MRVC updating until the end
+            true = ets:update_element(State#state.mrvc, mrvc, {2, NewMRVC}),
+            State#state{commit_queue=NewQueue, clog=NewCLog}
+    end.
+
+-spec update_vlog(partition_id(), vc(), [{key(), val()}], ets:tab()) -> ok.
+update_vlog(Partition, CommitVC, ListWS, VLog) ->
+    %% VLog.apply(Key, Val, CommitVC) \forall Key \in WS
+    VersionLogs = [begin
+        OldVLog = case ets:lookup(VLog, Key) of
+            [] -> pvc_version_log:new(Partition);
+            [{Key, Prev}] -> Prev
+        end,
+        {Key, pvc_version_log:insert(CommitVC, Value, OldVLog)}
+    end || {Key, Value} <- ListWS],
+    true = ets:insert(VLog, VersionLogs),
+    ok.
+
+-spec cache_vlog_last(partition_id(), vc(), [{key(), val()}], ets:tab()) -> ok.
+cache_vlog_last(Partition, CommitVC, ListWS, VLogCache) ->
+    CommitTime = pvc_vclock:get_time(Partition, CommitVC),
+    true = ets:insert(VLogCache, [{Key, CommitTime} || {Key, _} <- ListWS]),
+    ok.
