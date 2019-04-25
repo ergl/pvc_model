@@ -62,16 +62,6 @@ start_partition(Partition) ->
 stop_partition(PRef) ->
     gen_server:call(PRef, stop, infinity).
 
-%% @doc Get the ETS name of the given partition
-get_cache_name(Partition, Base) ->
-    BinBase = atom_to_binary(Base, latin1),
-    BinPart = integer_to_binary(Partition),
-    Name = <<BinBase/binary, <<"-">>/binary, BinPart/binary>>,
-    case catch binary_to_existing_atom(Name, latin1) of
-        {'EXIT', _} -> binary_to_atom(Name, latin1);
-        Normal -> Normal
-    end.
-
 %% TODO(borja)
 async_read(_ReplyTo, _Partition, _Key, _VCaggr, _HasRead) ->
     erlang:error(unimplemented).
@@ -93,11 +83,11 @@ decide(_Partition, _TxId, _Outcome) ->
 %%%===================================================================
 
 init([Partition]) ->
-    VLog = open_table(Partition, vlog),
-    VLogLastCache = open_table(Partition, vlog_last_cache),
+    VLog = persistent_table({vlog, Partition}),
+    VLogLastCache = persistent_table({vlog_last_cache, Partition}),
 
     %% Init MRVC table
-    MRVC = open_table(Partition, mrvc_cache),
+    MRVC = persistent_table({mrvc_cache, Partition}),
     true = ets:insert(MRVC, [{mrvc, pvc_vclock:new()}]),
 
     CLog = pvc_commit_log:new_at(Partition),
@@ -135,6 +125,23 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
+%% @doc Create an ETS table for a partition, and persist it
+persistent_table({Name, Partition}=Key) ->
+    TableName = get_cache_name(Partition, Name),
+    ok = persistent_term:put(Key, TableName),
+    open_table(TableName).
+
+%% @doc Get an ETS name of the given partition
+get_cache_name(Partition, Base) ->
+    BinBase = atom_to_binary(Base, latin1),
+    BinPart = integer_to_binary(Partition),
+    Name = <<BinBase/binary, <<"-">>/binary, BinPart/binary>>,
+    case catch binary_to_existing_atom(Name, latin1) of
+        {'EXIT', _} -> binary_to_atom(Name, latin1);
+        Normal -> Normal
+    end.
+
+%% @doc Generate a name for this partition owner
 -spec generate_partition_name(non_neg_integer()) -> atom().
 generate_partition_name(Partition) ->
     BinPart = integer_to_binary(Partition),
@@ -144,11 +151,10 @@ generate_partition_name(Partition) ->
         Normal -> Normal
     end.
 
-open_table(Partition, Name) ->
-    open_table(Partition, Name, [set, protected, named_table, {read_concurrency, true}]).
+open_table(CacheName) ->
+    open_table(CacheName, [set, protected, named_table, {read_concurrency, true}]).
 
-open_table(Partition, Name, Options) ->
-    CacheName = get_cache_name(Partition, Name),
+open_table(CacheName, Options) ->
     case ets:info(CacheName) of
         undefined ->
             ets:new(CacheName, Options);
@@ -157,5 +163,5 @@ open_table(Partition, Name, Options) ->
             try ets:delete(CacheName)
             catch _:_Reason -> ok
             end,
-            open_table(Partition, Name, Options)
+            open_table(CacheName, Options)
     end.
