@@ -10,7 +10,6 @@
 
 %% Transactional API
 -export([read/4,
-         read_sync/4,
          prepare/4,
          decide/3]).
 
@@ -36,12 +35,7 @@ stop_partitions(PRefList) ->
     ok.
 
 read(Partition, Key, VCaggr, HasRead) ->
-    ok = pvc_model_partition_owner:async_read(self(), Partition, Key, VCaggr, HasRead),
-    receive {from, Partition, Msg} -> Msg
-    end.
-
-read_sync(Partition, Key, VCaggr, HasRead) ->
-    pvc_model_partition_owner:sync_read(Partition, Key, VCaggr, HasRead).
+    pvc_model_partition_owner:read(Partition, Key, VCaggr, HasRead).
 
 prepare(Partition, TxId, WriteSet, PartitionVersion) ->
     pvc_model_partition_owner:prepare(Partition, TxId, WriteSet, PartitionVersion).
