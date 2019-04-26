@@ -141,7 +141,12 @@ update_tx(Partition, VersionVC, MaxVC, Tx) ->
 key_updated(Key, Ring, WS) ->
     {Partition, Owner} = pvc_model:partition_for_key(Key, Ring),
     PartitionWS = get_partition_ws(Partition, WS),
-    pvc_writeset:get(Key, PartitionWS, {false, Partition, Owner}).
+    case pvc_writeset:get(Key, PartitionWS) of
+        error ->
+            {false, Partition, Owner};
+        {ok, Value} ->
+            {ok, Value}
+    end.
 
 -spec get_partition_ws(partition_id(), tx_ws()) -> ws().
 get_partition_ws(Partition, WS) ->
