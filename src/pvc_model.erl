@@ -23,16 +23,16 @@ start() ->
 stop() ->
     application:stop(pvc_model).
 
--spec start_partitions([partition_id()]) -> [pref()].
+-spec start_partitions([partition_id()]) -> ring().
 start_partitions(PartitionList) ->
-    lists:map(fun(P) ->
-        {ok, _, PRef} = pvc_model_partition_owner:start_partition(P),
-        {PRef, P}
-    end, PartitionList).
+    lists:foldl(fun(Partition, Acc) ->
+        {ok, _, PRef} = pvc_model_partition_owner:start_partition(Partition),
+        orddict:store(Partition, PRef, Acc)
+    end, orddict:new(), PartitionList).
 
--spec stop_partitions([pref()]) -> ok.
-stop_partitions(PRefs) ->
-    [pvc_model_partition_owner:stop_partition(Ref) || {Ref, _} <- PRefs],
+-spec stop_partitions(ring()) -> ok.
+stop_partitions(Ring) ->
+    [pvc_model_partition_owner:stop_partition(Ref) || {_, Ref} <- Ring],
     ok.
 
 -spec read(partition_id(), key(), vc(), read_partitions()) -> {ok, val(), vc(), vc()}
@@ -53,11 +53,11 @@ prepare(Partition, TxId, WriteSet, PartitionVersion) ->
 decide(Partition, TxId, Outcome) ->
     pvc_model_partition_owner:decide(Partition, TxId, Outcome).
 
--spec partition_for_key([pref()], key()) -> partition_id().
-partition_for_key(PartitionList, Key) ->
+-spec partition_for_key(key(), ring()) -> {partition_id(), partition_server()}.
+partition_for_key(Key, Ring) ->
     Conv = convert_key(Key),
-    Pos = Conv rem length(PartitionList) + 1,
-    element(2, lists:nth(Pos, PartitionList)).
+    Pos = Conv rem length(Ring) + 1,
+    lists:nth(Pos, Ring).
 
 -spec convert_key(term()) -> non_neg_integer().
 convert_key(Key) when is_binary(Key) ->

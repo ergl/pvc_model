@@ -73,8 +73,7 @@ read(Partition, Key, VCaggr, HasRead) ->
 -spec prepare(Partition :: partition_id(),
               TxId :: tx_id(),
               WriteSet :: ws(),
-              PartitionVersion :: non_neg_integer()) -> {ok, non_neg_integer(), non_neg_integer()}
-                                                      | abort().
+              PartitionVersion :: non_neg_integer()) -> vote().
 
 prepare(Partition, TxId, WriteSet, PartitionVersion) ->
     case is_ws_stale(Partition, WriteSet, PartitionVersion) of
