@@ -86,7 +86,9 @@ materialize_execution_int([], State) ->
     result_for_state(State);
 
 materialize_execution_int([#{id := Id, op := Op} | Rest], State) ->
-    materialize_execution_int(Rest, execute_for_id(Id, Op, State)).
+    Res = execute_for_id(Id, Op, State),
+    io:format(""),
+    materialize_execution_int(Rest, Res).
 
 execute_for_id(Id, Op, State=#state{executions=Map}) ->
     case maps:get(Id, Map, undefined) of

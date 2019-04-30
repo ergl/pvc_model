@@ -11,7 +11,7 @@ prop_single_commit() ->
             {Client, Ring} = start_case(),
             Result = history_executor:execute_single_history(History, Client),
             stop_case(Ring),
-            ?WHENFAIL(io:format("History ~p~nResult: ~p~n", [History, Result]),
+            ?WHENFAIL(io:format("History = ~p.~n~n %%Result: ~p~n", [History, Result]),
                 Result =:= ok)
         end)).
 
@@ -22,7 +22,7 @@ prop_all_commit() ->
                     {Client, Ring} = start_case(),
                     Result = history_executor:materialize_execution(Execution, Client),
                     stop_case(Ring),
-                    ?WHENFAIL(io:format("History ~p~nResult ~p~n", [Execution, Result]),
+                    ?WHENFAIL(io:format("History = ~p.~n~n %% Result: ~p~n", [Execution, Result]),
                               ok_result(Result))
                 end)).
 
