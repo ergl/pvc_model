@@ -15,34 +15,35 @@ prop_single_commit() ->
                 Result =:= ok)
         end)).
 
-prop_all_commit() ->
+prop_no_read_aborts() ->
     ?SETUP(fun setup/0,
-        ?FORALL(Execution, execution_generator:simple_execution(4),
+        ?FORALL(Execution, execution_generator:simple_execution(5),
                 begin
                     {Client, Ring} = start_case(),
                     Result = history_executor:materialize_execution(Execution, Client),
                     stop_case(Ring),
                     ?WHENFAIL(io:format("History = ~p.~n~n %% Result: ~p~n", [Execution, Result]),
-                              ok_result(Result))
+                              no_read_aborts(Result))
                 end)).
 
-ok_result([]) ->
+no_read_aborts([]) ->
     true;
 
-ok_result([{_, _, Error} | Rest]) ->
+no_read_aborts([{_, _, Error} | Rest]) ->
     case Error of
         {error, abort_read} ->
             false;
         _ ->
-            ok_result(Rest)
+            no_read_aborts(Rest)
     end.
 
 setup() ->
-    pvc_model:start(),
+    {ok, _} = pvc_model:start(),
+    ok,
     fun() -> teardown() end.
 
 teardown() ->
-    pvc_model:stop().
+    ok = pvc_model:stop().
 
 start_case() ->
     Ring = pvc_model:start_partitions(?PARTITIONS),
