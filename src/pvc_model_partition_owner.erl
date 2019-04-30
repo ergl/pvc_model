@@ -295,7 +295,7 @@ process_queue(State=#state{partition=P}) ->
 update_vlog(Partition, CommitVC, ListWS, VLog) ->
     %% VLog.apply(Key, Val, CommitVC) \forall Key \in WS
     lists:foldl(fun({Key, Value}, AccVlog) ->
-        maps:update_with(Key, fun(KeyVLog) ->
+        maps_update_with(Key, fun(KeyVLog) ->
             pvc_version_log:insert(CommitVC, Value, KeyVLog)
         end, pvc_version_log:new(Partition), AccVlog)
     end, VLog, ListWS).
@@ -306,3 +306,8 @@ cache_vlog_last(Partition, CommitVC, ListWS, VLogCache) ->
     lists:foldl(fun({Key, _}, AccCache) ->
         maps:put(Key, CommitTime, AccCache)
     end, VLogCache, ListWS).
+
+%% @doc Similar to maps:update_with/4, but the Initial value is also passed to Fun.
+maps_update_with(Key, Fun, Init, Map) when is_function(Fun, 1), is_map(Map) ->
+    Val = maps:get(Key, Map, Init),
+    maps:put(Key, Fun(Val), Map).
