@@ -26,6 +26,19 @@ prop_no_read_aborts() ->
                               no_read_aborts(Result))
                 end)).
 
+prop_no_ready_tx() ->
+    ?SETUP(fun setup/0,
+        ?FORALL(Execution, execution_generator:simple_execution(1),
+                begin
+                    {Client, Ring} = start_case(),
+                    _ = history_executor:materialize_execution(Execution, Client),
+                    Queues = commit_queues(),
+                    timer:sleep(1000),
+                    stop_case(Ring),
+                    ?WHENFAIL(io:format("History = ~p.~n~n. %% Queues: ~p~n", [Execution, Queues]),
+                              commit_queues_empty(Queues))
+                end)).
+
 no_read_aborts([]) ->
     true;
 
@@ -36,6 +49,21 @@ no_read_aborts([{_, _, Error} | Rest]) ->
         _ ->
             no_read_aborts(Rest)
     end.
+
+commit_queues() ->
+    lists:map(fun(P) ->
+        State = pvc_model_partition_owner:debug_get_state(P),
+        %% FIXME(borja): Export state so we can match on it
+        {state, P, _Vlog, _VlogLast, _MRVC, _LastPrep, CQueue, _Clog} = State,
+        {P, CQueue}
+    end, ?PARTITIONS).
+
+
+commit_queues_empty(Queues) ->
+    lists:all(fun({_, Queue}) ->
+        {Ready, _} = pvc_commit_queue:dequeue_ready(Queue),
+        Ready =:= []
+    end, Queues).
 
 setup() ->
     {ok, _} = pvc_model:start(),
