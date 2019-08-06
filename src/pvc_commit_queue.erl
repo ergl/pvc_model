@@ -42,11 +42,11 @@
 -export_type([cqueue/0]).
 
 -export([new/0,
-    enqueue/3,
-    dequeue_ready/1,
-    ready/4,
-    remove/2,
-    contains_disputed/2]).
+         enqueue/3,
+         dequeue_ready/1,
+         ready/4,
+         remove/2,
+         contains_disputed/2]).
 
 -spec contains_disputed(writeset(), cqueue()) -> boolean().
 contains_disputed(WS, #cqueue{write_sets = WSDict}) ->
@@ -55,14 +55,14 @@ contains_disputed(WS, #cqueue{write_sets = WSDict}) ->
 -spec new() -> cqueue().
 new() ->
     #cqueue{q = queue:new(),
-        ready_tx = dict:new(),
-        write_sets = dict:new(),
-        discarded_tx = sets:new()}.
+            ready_tx = dict:new(),
+            write_sets = dict:new(),
+            discarded_tx = sets:new()}.
 
 -spec enqueue(txid(), writeset(), cqueue()) -> cqueue().
 enqueue(TxId, WS, CQueue = #cqueue{q = Queue, write_sets = WSDict}) ->
     CQueue#cqueue{q = queue:in(TxId, Queue),
-        write_sets = dict:store(TxId, WS, WSDict)}.
+                  write_sets = dict:store(TxId, WS, WSDict)}.
 
 -spec ready(txid(), list(), pvc_vc(), cqueue()) -> cqueue().
 ready(TxId, IndexList, VC, CQueue = #cqueue{
@@ -87,14 +87,14 @@ remove(TxId, CQueue = #cqueue{
             CQueue;
         true ->
             CQueue#cqueue{write_sets = dict:erase(TxId, WSDict),
-                discarded_tx = sets:add_element(TxId, DiscardedSet)}
+                          discarded_tx = sets:add_element(TxId, DiscardedSet)}
     end.
 
 -spec dequeue_ready(cqueue()) -> {[{txid(), writeset(), pvc_vc(), list()}], cqueue()}.
 dequeue_ready(#cqueue{q = Queue,
-    write_sets = WSDict,
-    ready_tx = ReadyDict,
-    discarded_tx = DiscardedSet}) ->
+                      write_sets = WSDict,
+                      ready_tx = ReadyDict,
+                      discarded_tx = DiscardedSet}) ->
 
     {Acc, NewCQueue} = get_ready(queue:out(Queue), WSDict, ReadyDict, DiscardedSet, []),
     {lists:reverse(Acc), NewCQueue}.
@@ -132,9 +132,9 @@ get_ready({{value, TxId}, Queue}, WSDict, ReadyDict, DiscardedSet, Acc) ->
 
 from(Queue, WSDIct, ReadyDict, DiscardedDict) ->
     #cqueue{q = Queue,
-        write_sets = WSDIct,
-        ready_tx = ReadyDict,
-        discarded_tx = DiscardedDict}.
+            write_sets = WSDIct,
+            ready_tx = ReadyDict,
+            discarded_tx = DiscardedDict}.
 
 -spec is_ws_disputed([{txid(), writeset()}], writeset()) -> boolean().
 is_ws_disputed([], _) ->
