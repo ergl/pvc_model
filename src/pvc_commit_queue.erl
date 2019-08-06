@@ -23,11 +23,11 @@
 -record(cqueue, {
     %% The main commit TxId queue
     q :: queue:queue(txid()),
-    %% Mapping between txids and their write sets
-    write_sets :: #{txid() := writeset()},
     %% For the ready tx, put their ids with their commit VC
     %% and their index key list here
     ready_tx :: #{txid() := {pvc_vc(), list()}},
+    %% Mapping between txids and their write sets
+    write_sets :: #{txid() := writeset()},
     %% A set of txids that have been discarded
     discarded_tx :: sets:set(txid())
 }).
@@ -130,8 +130,8 @@ get_ready({{value, TxId}, Queue}, WriteSets, ReadyMap, DiscardedSet, Acc) ->
 
 from(Queue, WriteSets, ReadyMap, DiscardedDict) ->
     #cqueue{q = Queue,
-            write_sets = WriteSets,
             ready_tx = ReadyMap,
+            write_sets = WriteSets,
             discarded_tx = DiscardedDict}.
 
 -spec is_ws_disputed([{txid(), writeset()}], writeset()) -> boolean().
